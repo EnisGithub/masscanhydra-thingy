@@ -1,0 +1,8 @@
+Testing shit
+fixing batch element so its the real masscan command not smth rndm
+ts pmo icl
+some c2 kind of thing amybe telegram bot or just simple ssh x discord webhook
+autoinject
+add more kind of rmc
+maybe masscan x auto cve checker x autosploit or smth
+never getting out of the skid phase jfl
