@@ -3,6 +3,7 @@ import queue
 import threading
 import subprocess
 import time
+import ipaddress
 
 # Files
 UFILE = "users.txt"
