@@ -9,6 +9,11 @@ UFILE = "users.txt"
 PFILE = "passes.txt"
 LOGS = "valid_creds.txt"
 ELOGS = "error_log.txt"
+start_ip = ipaddress.IPv4Address("0.0.0.0")  # Start-IP
+end_ip = ipaddress.IPv4Address("255.255.255.254")  # Ende der Range
+
+# Scannen in Batches
+current_ip = start_ip
 
 # Settings
 RATE = "20000"
@@ -62,22 +67,19 @@ def scan():
     print("[*] Scanning...")
     last = "0.0.0.0"
 
-    while True:
-        json_file = "masscan.json"
-        cmd = f"masscan -p{PORT} --open --rate={RATE} --range {last} --batch {BATCH} --exclude 255.255.255.255 --output-format=json --output-filename={json_file}"
-        print(f"[DEBUG] {cmd}")
-        subprocess.run(cmd, shell=True)
 
-        if os.path.exists(json_file):
-            with open(json_file, "r") as f:
-                for line in f:
-                    if '"ip":' in line:
-                        ip = line.split('"ip": "')[1].split('"')[0]
-                        stats["scan"] += 1
-                        print(f"[*] Found {ip} (Scan: {stats['scan']})")
-                        q.put(ip)
-
-            os.remove(json_file)
+while current_ip <= end_ip:
+    # Berechne den nächsten Batch-Endpunkt (aber nicht über die Grenze hinaus)
+    next_ip = min(current_ip + BATCH - 1, end_ip)
+    
+    # Masscan-Befehl erstellen
+    cmd = f"masscan -p{PORT} --open --rate={RATE} --range {current_ip}-{next_ip} --output-format=json --output-filename={OUTPUT_FILE} --exclude 255.255.255.255"
+    
+    print(f"[DEBUG] Running: {cmd}")
+    subprocess.run(cmd, shell=True)
+    
+    # Setze den Startpunkt für den nächsten Batch
+    current_ip = next_ip + 1
 
         time.sleep(1)
 
