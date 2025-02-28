@@ -127,7 +127,7 @@ def show_stats():
     while True:
         time.sleep(5)
         # Clear the screen (for Windows, use "cls"; on Unix, change to "clear")
-        os.system("cls")
+        os.system("clear")
         print("=== Stats ===")
         print(f"Scanned IPs: {stats['scanned_ips']}")
         print(f"Hits: {stats['hits']}")
